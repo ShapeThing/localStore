@@ -3,11 +3,12 @@ import type { DefaultGraph, NamedNode, Quad, Quad_Graph, Store as RdfJsStore, So
 import EventEmitter from 'events'
 import Hex from 'hex-encoding'
 import { get, set } from 'idb-keyval'
-import { Parser, Store } from 'n3'
+import { Parser, Store, Writer } from 'n3'
 /** @ts-ignore */
 import { Readable } from 'readable-stream'
 import { getAllFilesFromDirectory } from './helpers/getAllFilesFromDirectory'
 import { getFileHandleByPath } from './helpers/getFileHandleByPath'
+import { toTriple } from './helpers/toTriple'
 
 type LocalStoreOptions = {
   baseUri: URL
@@ -24,11 +25,35 @@ export class LocalStore implements Source, RdfJsStore {
 
   constructor({ baseUri }: LocalStoreOptions) {
     this.#baseUri = baseUri
+    if (!baseUri.toString().endsWith('/')) throw new Error('BaseIRI must end on a trailing slash')
   }
-  remove(stream: Stream<Quad>): EventEmitter {
-    console.log(stream)
-    throw new Error('Method not implemented.')
+
+  /**
+   * Connects to a previously mounted folder when given its name,
+   * or show a directory picker to connect to a folder.
+   */
+  async mount(name?: string) {
+    try {
+      const mounts: Set<string> = (await get('mounts')) ?? new Set()
+
+      if (name && mounts.has(name)) {
+        this.#directoryHandle = await get(name)
+        return
+      }
+
+      if (name && !mounts.has(name)) {
+        console.info(`Could not find connection to folder ${name}, please connect again.`)
+      }
+
+      this.#directoryHandle = await globalThis.showDirectoryPicker()
+      await set(this.#directoryHandle.name, this.#directoryHandle)
+      mounts.add(this.#directoryHandle.name)
+      set('mounts', mounts)
+    } catch (error: any) {
+      console.error(error)
+    }
   }
+
   removeMatches(
     subject?: Term | null,
     predicate?: Term | null,
@@ -92,41 +117,73 @@ export class LocalStore implements Source, RdfJsStore {
   }
 
   /**
-   * Updates one graph on disk
+   * Removes quads from one or multiple disk files.
    */
-  async updateGraph(graph: NamedNode | DefaultGraph, update: { deletions?: Quad[]; insertions?: Quad[] }) {
-    const fileHandle = await this.#graphToFileHandle(graph, true)
-    const file = await fileHandle?.getFile()!
-    const contents = await file.text()
-    const quads = new Parser({ baseIRI: graph.value }).parse(contents)
-    console.log(quads, graph.value)
-    console.log(fileHandle)
+  remove(stream: Stream<Quad>): EventEmitter {
+    const eventEmitter = new EventEmitter()
+
+    let lastGraph: NamedNode | DefaultGraph | undefined = undefined
+
+    const deletions: Record<string, Quad[]> = {}
+
+    const onEvent = (quad?: Quad) => {
+      if (lastGraph && (!quad || !quad.graph.equals(lastGraph))) {
+        this.updateGraph(lastGraph, { deletions: deletions[lastGraph.value] })
+      }
+
+      if (quad) {
+        if (!(quad.graph.value in deletions)) deletions[quad.graph.value] = []
+        deletions[quad.graph.value].push(quad)
+        lastGraph = quad.graph as DefaultGraph | NamedNode<string>
+      } else {
+        lastGraph = undefined
+        eventEmitter.emit('end')
+      }
+    }
+
+    stream.on('data', onEvent)
+    stream.on('end', onEvent)
+
+    stream.on('error', (error: Error) => {
+      console.error('Error in input stream:', error)
+      eventEmitter.emit('error', error)
+    })
+
+    return eventEmitter
   }
 
   /**
-   * Connects to a previously mounted folder when given its name,
-   * or show a directory picker to connect to a folder.
+   * Updates one graph on disk
    */
-  async mount(name?: string) {
-    try {
-      const mounts: Set<string> = (await get('mounts')) ?? new Set()
+  async updateGraph(graph: NamedNode | DefaultGraph, update: { deletions?: Quad[]; insertions?: Quad[] }) {
+    const fileHandle = (await this.#graphToFileHandle(graph, true)) as FileSystemFileHandle
+    const file = await fileHandle.getFile()!
 
-      if (name && mounts.has(name)) {
-        this.#directoryHandle = await get(name)
-        return
-      }
+    const contents = await file.text()
+    const parser = new Parser({ baseIRI: graph.value })
+    const quads = parser.parse(contents)
 
-      if (name && !mounts.has(name)) {
-        console.info(`Could not find connection to folder ${name}, please connect again.`)
-      }
+    const existingQuads = new Store(quads)
+    const quadsToDelete = new Store(update.deletions?.map(toTriple))
+    const quadsToAdd = new Store(update.insertions?.map(toTriple))
 
-      this.#directoryHandle = await globalThis.showDirectoryPicker()
-      await set(this.#directoryHandle.name, this.#directoryHandle)
-      mounts.add(this.#directoryHandle.name)
-      set('mounts', mounts)
-    } catch (error: any) {
-      console.error(error)
-    }
+    const mutatedQuads = existingQuads.difference(quadsToDelete).union(quadsToAdd)
+    const writer = new Writer({ baseIRI: graph.value })
+    writer.addQuads([...mutatedQuads])
+
+    return new Promise((resolve, reject) => {
+      writer.end(async (error: Error, result: string) => {
+        const writable = await fileHandle.createWritable()
+        await writable.write(result)
+        await writable.close()
+
+        // Clear the cache so fresh data wil be fetched.
+        this.#cache.deleteGraph(graph)
+
+        if (error) reject(error)
+        resolve(null)
+      })
+    })
   }
 
   /**
@@ -137,6 +194,8 @@ export class LocalStore implements Source, RdfJsStore {
     if (!this.#directoryHandle) throw new Error(`Local store not mounted`)
 
     const stream = new Readable({ objectMode: true })
+
+    console.info('match')
 
     stream._read = async () => {
       const graphIterator = graph ? ([graph] as [NamedNode]) : this.getNamedGraphs()
@@ -156,7 +215,9 @@ export class LocalStore implements Source, RdfJsStore {
           graph
         )
 
-        graphStream.on('data', (quad: Quad) => stream.push(quad))
+        graphStream.on('data', (quad: Quad) => {
+          stream.push(quad)
+        })
 
         graphStream.on('end', () => {
           graphIterationsEnded++
@@ -259,7 +320,11 @@ export class LocalStore implements Source, RdfJsStore {
      * Relative named graphs
      */
     if (graph.value.startsWith(this.#baseUri.toString())) {
-      const filename = `${graph.value.replace(this.#baseUri.toString(), '')}.ttl`
+      const relativeGraph = graph.value.replace(this.#baseUri.toString(), '')
+      const cleanedRelativeGraph = relativeGraph.endsWith('/')
+        ? relativeGraph.substring(0, relativeGraph.length - 1)
+        : relativeGraph
+      const filename = `${cleanedRelativeGraph}.ttl`
 
       try {
         return getFileHandleByPath(filename, this.#directoryHandle, create)

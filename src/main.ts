@@ -12,6 +12,9 @@ const termToString = (term: Term) => {
 const store = new LocalStore({
   baseUri: new URL('http://example.com/')
 })
+
+await store.mount('example')
+
 const engine = new QueryEngine()
 
 document.querySelector('#mount-store')?.addEventListener('click', async () => {
@@ -60,6 +63,19 @@ document.querySelector('#update')?.addEventListener('click', async () => {
 
 document.querySelector('#delete')?.addEventListener('click', async () => {
   const query = `drop graph <http://example.com/lorem>`
+
+  await engine.queryVoid(query, {
+    sources: [store]
+  })
+})
+
+document.querySelector('#delete-where')?.addEventListener('click', async () => {
+  const query = `DELETE WHERE { 
+    GRAPH <http://example.com/y/> {
+      <http://example.com/y/> <http://example.com/y/lorem> <http://example.com/y/ipsum>
+    }
+  }
+`
 
   await engine.queryVoid(query, {
     sources: [store]
