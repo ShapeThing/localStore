@@ -1,5 +1,6 @@
 import factory from '@rdfjs/data-model'
-import type { DefaultGraph, NamedNode, Quad, Source, Stream, Term } from '@rdfjs/types'
+import type { DefaultGraph, NamedNode, Quad, Quad_Graph, Store as RdfJsStore, Source, Stream, Term } from '@rdfjs/types'
+import EventEmitter from 'events'
 import Hex from 'hex-encoding'
 import { get, set } from 'idb-keyval'
 import { Parser, Store } from 'n3'
@@ -15,7 +16,7 @@ type LocalStoreOptions = {
  * Creates a queryable store, that mounts a directory on the drive and read and writes turtle files.
  * Each of these files can have relative IRIs such as <> or <#lorem> or </ipsum>.
  */
-export class LocalStore implements Source {
+export class LocalStore implements Source, RdfJsStore {
   #directoryHandle?: FileSystemDirectoryHandle
   #baseUri: URL
   #cache: Store = new Store()
@@ -23,6 +24,83 @@ export class LocalStore implements Source {
 
   constructor({ baseUri }: LocalStoreOptions) {
     this.#baseUri = baseUri
+  }
+  remove(stream: Stream<Quad>): EventEmitter {
+    console.log(stream)
+    throw new Error('Method not implemented.')
+  }
+  removeMatches(
+    subject?: Term | null,
+    predicate?: Term | null,
+    object?: Term | null,
+    graph?: Term | null
+  ): EventEmitter {
+    console.log(subject, predicate, object, graph)
+    throw new Error('Method not implemented.')
+  }
+
+  /**
+   * Deletes one graph, triggered by DROP GRAPH <a>
+   */
+  deleteGraph(graph: string | Quad_Graph): EventEmitter {
+    const eventEmitter = new EventEmitter()
+    const graphTerm = (typeof graph === 'string' ? factory.namedNode(graph) : graph) as NamedNode
+    this.#cache.deleteGraph(graph)
+    this.#graphToFileHandle(graphTerm).then(async fileHandle => {
+      /** @ts-expect-error Somehow the typings are off. Chrome really has this method */
+      fileHandle?.remove()
+      eventEmitter.emit('end')
+    })
+
+    return eventEmitter
+  }
+
+  /**
+   * Imports quads to one or multiple disk files.
+   */
+  import(stream: Stream<Quad>): EventEmitter {
+    const eventEmitter = new EventEmitter()
+
+    let lastGraph: NamedNode | DefaultGraph | undefined = undefined
+
+    const insertions: Record<string, Quad[]> = {}
+
+    const onEvent = (quad?: Quad) => {
+      if (lastGraph && (!quad || !quad.graph.equals(lastGraph))) {
+        this.updateGraph(lastGraph, { insertions: insertions[lastGraph.value] })
+      }
+
+      if (quad) {
+        if (!(quad.graph.value in insertions)) insertions[quad.graph.value] = []
+        insertions[quad.graph.value].push(quad)
+        lastGraph = quad.graph as DefaultGraph | NamedNode<string>
+      } else {
+        lastGraph = undefined
+        eventEmitter.emit('end')
+      }
+    }
+
+    stream.on('data', onEvent)
+    stream.on('end', onEvent)
+
+    stream.on('error', (error: Error) => {
+      console.error('Error in input stream:', error)
+      eventEmitter.emit('error', error)
+    })
+
+    return eventEmitter
+  }
+
+  /**
+   * Updates one graph on disk
+   */
+  async updateGraph(graph: NamedNode | DefaultGraph, update: { deletions?: Quad[]; insertions?: Quad[] }) {
+    const fileHandle = await this.#graphToFileHandle(graph, true)
+    const file = await fileHandle?.getFile()!
+    const contents = await file.text()
+    const quads = new Parser({ baseIRI: graph.value }).parse(contents)
+    console.log(quads, graph.value)
+    console.log(fileHandle)
   }
 
   /**
@@ -47,12 +125,12 @@ export class LocalStore implements Source {
       mounts.add(this.#directoryHandle.name)
       set('mounts', mounts)
     } catch (error: any) {
-      console.log(error)
+      console.error(error)
     }
   }
 
   /**
-   * The main function for local store.
+   * The main function for local store for reading.
    * When a match is done we decide which graphs we need to cache and parse them and put them in the N3 store.
    */
   match(subject?: Term | null, predicate?: Term | null, object?: Term | null, graph?: Term | null): Stream<Quad> {
@@ -171,7 +249,10 @@ export class LocalStore implements Source {
     return factory.namedNode(new URL(cleanedPath, this.#baseUri).toString())
   }
 
-  async #graphToFileHandle(graph: NamedNode | DefaultGraph): Promise<FileSystemFileHandle | undefined> {
+  async #graphToFileHandle(
+    graph: NamedNode | DefaultGraph,
+    create?: boolean
+  ): Promise<FileSystemFileHandle | undefined> {
     if (!this.#directoryHandle) throw new Error(`Local store not mounted`)
 
     /**
@@ -181,14 +262,14 @@ export class LocalStore implements Source {
       const filename = `${graph.value.replace(this.#baseUri.toString(), '')}.ttl`
 
       try {
-        return getFileHandleByPath(filename, this.#directoryHandle)
+        return getFileHandleByPath(filename, this.#directoryHandle, create)
       } catch {}
 
       /**
        * The default graph
        */
     } else if (graph.termType === 'DefaultGraph') {
-      return getFileHandleByPath('default-graph.ttl', this.#directoryHandle)
+      return getFileHandleByPath('default-graph.ttl', this.#directoryHandle, create)
 
       /**
        * A graph that is not starting with our base name.
@@ -197,7 +278,7 @@ export class LocalStore implements Source {
       const uint8 = new TextEncoder().encode(graph.value)
       const encoded = Hex.encode(uint8)
       const filename = `${encoded}.ttl`
-      return getFileHandleByPath(filename, this.#directoryHandle)
+      return getFileHandleByPath(filename, this.#directoryHandle, create)
     }
   }
 }
