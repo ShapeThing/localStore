@@ -1,0 +1,30 @@
+{
+  "name": "localstore",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "test": "vitest",
+    "test:browser": "vitest"
+  },
+  "dependencies": {
+    "@rdfjs/data-model": "^2.1.0",
+    "@testing-library/dom": "^10.4.0",
+    "@types/n3": "^1.25.3",
+    "@types/rdfjs__data-model": "^2.0.9",
+    "@vitest/browser": "^3.1.4",
+    "hex-encoding": "^2.0.3",
+    "idb-keyval": "^6.2.2",
+    "n3": "^1.25.2",
+    "readable-stream": "^4.7.0"
+  },
+  "devDependencies": {
+    "@comunica/query-sparql": "^4.2.0",
+    "@rdfjs/types": "^2.0.1",
+    "typescript": "~5.8.3",
+    "vite": "^6.3.5",
+    "@types/wicg-file-system-access": "^2023.10.6",
+    "vitest": "^3.1.4"
+  }
+}
