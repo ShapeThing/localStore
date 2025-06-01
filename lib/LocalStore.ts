@@ -1,32 +1,28 @@
-import type {
-  DefaultGraph,
-  NamedNode,
-  Quad,
-  Source,
-  Stream,
-  Term,
-} from "@rdfjs/types";
-import { get, set } from "idb-keyval";
+import factory from '@rdfjs/data-model'
+import type { DefaultGraph, NamedNode, Quad, Source, Stream, Term } from '@rdfjs/types'
+import Hex from 'hex-encoding'
+import { get, set } from 'idb-keyval'
+import { Parser, Store } from 'n3'
 /** @ts-ignore */
-import { Readable } from "readable-stream";
-import factory from "@rdfjs/data-model";
-import { Parser, Store } from "n3";
-import { getFileHandleByPath } from "./helpers/getFileHandleByPath";
-import { getAllFilesFromDirectory } from "./helpers/getAllFilesFromDirectory";
-import Hex from "hex-encoding";
+import { Readable } from 'readable-stream'
+import { getAllFilesFromDirectory } from './helpers/getAllFilesFromDirectory'
+import { getFileHandleByPath } from './helpers/getFileHandleByPath'
 
 type LocalStoreOptions = {
-  baseUri: URL;
-};
-
+  baseUri: URL
+}
+/**
+ * Creates a queryable store, that mounts a directory on the drive and read and writes turtle files.
+ * Each of these files can have relative IRIs such as <> or <#lorem> or </ipsum>.
+ */
 export class LocalStore implements Source {
-  #directoryHandle?: FileSystemDirectoryHandle;
-  #baseUri: URL;
-  #cache: Store = new Store();
-  #inFlightCachePromises: Map<string, Promise<void>> = new Map();
+  #directoryHandle?: FileSystemDirectoryHandle
+  #baseUri: URL
+  #cache: Store = new Store()
+  #inFlightCachePromises: Map<string, Promise<void>> = new Map()
 
   constructor({ baseUri }: LocalStoreOptions) {
-    this.#baseUri = baseUri;
+    this.#baseUri = baseUri
   }
 
   /**
@@ -35,169 +31,173 @@ export class LocalStore implements Source {
    */
   async mount(name?: string) {
     try {
-      const mounts: Set<string> = (await get("mounts")) ?? new Set();
+      const mounts: Set<string> = (await get('mounts')) ?? new Set()
 
       if (name && mounts.has(name)) {
-        this.#directoryHandle = await get(name);
-        return;
+        this.#directoryHandle = await get(name)
+        return
       }
 
       if (name && !mounts.has(name)) {
-        console.info(
-          `Could not find connection to folder ${name}, please connect again.`
-        );
+        console.info(`Could not find connection to folder ${name}, please connect again.`)
       }
 
-      this.#directoryHandle = await globalThis.showDirectoryPicker();
-      await set(this.#directoryHandle.name, this.#directoryHandle);
-      mounts.add(this.#directoryHandle.name);
-      set("mounts", mounts);
+      this.#directoryHandle = await globalThis.showDirectoryPicker()
+      await set(this.#directoryHandle.name, this.#directoryHandle)
+      mounts.add(this.#directoryHandle.name)
+      set('mounts', mounts)
     } catch (error: any) {
-      console.log(error);
+      console.log(error)
     }
   }
 
-  match(
-    subject?: Term | null,
-    predicate?: Term | null,
-    object?: Term | null,
-    graph?: Term | null
-  ): Stream<Quad> {
-    if (!this.#directoryHandle) throw new Error(`Local store not mounted`);
+  /**
+   * The main function for local store.
+   * When a match is done we decide which graphs we need to cache and parse them and put them in the N3 store.
+   */
+  match(subject?: Term | null, predicate?: Term | null, object?: Term | null, graph?: Term | null): Stream<Quad> {
+    if (!this.#directoryHandle) throw new Error(`Local store not mounted`)
 
-    const stream = new Readable({ objectMode: true });
+    const stream = new Readable({ objectMode: true })
 
     stream._read = async () => {
-      const graphIterator = graph
-        ? ([graph] as [NamedNode])
-        : this.getNamedGraphs();
+      const graphIterator = graph ? ([graph] as [NamedNode]) : this.getNamedGraphs()
 
-      let graphIterations = 0;
-      let graphIterationsEnded = 0;
+      let graphIterations = 0
+      let graphIterationsEnded = 0
 
       for await (const graph of graphIterator) {
-        graphIterations++;
+        graphIterations++
 
-        if (!this.#graphIsCached(graph)) await this.#cacheGraph(graph);
+        if (!this.#graphIsCached(graph)) await this.#cacheGraph(graph)
         const graphStream = this.#cache.match(
           /** @ts-ignore */
           subject,
           predicate,
           object,
           graph
-        );
+        )
 
-        graphStream.on("data", (quad: Quad) => stream.push(quad));
+        graphStream.on('data', (quad: Quad) => stream.push(quad))
 
-        graphStream.on("end", () => {
-          graphIterationsEnded++;
+        graphStream.on('end', () => {
+          graphIterationsEnded++
           if (graphIterations === graphIterationsEnded) {
-            stream.push(null);
+            stream.push(null)
           }
-        });
+        })
       }
-    };
+    }
 
-    return stream;
+    return stream
   }
 
-  #graphIsCached(graph: NamedNode) {
+  /**
+   * Check in the N3 store if the graph is cached.
+   */
+  #graphIsCached(graph: NamedNode | DefaultGraph) {
     /** @ts-expect-error we are using N3s internal API */
-    return this.#cache._termToNumericId(graph) !== undefined;
+    return this.#cache._termToNumericId(graph) !== undefined
   }
 
-  async #cacheGraph(graph: NamedNode) {
-    const fileHandle = await this.#graphToFileHandle(
-      graph as NamedNode | DefaultGraph
-    );
-    if (!fileHandle) return;
+  /**
+   * Cache a graph, it can be the case that a graph on disk is parsed and that this takes a while and in the same time a request is done for the same graph.
+   * For this reason we deduplicate the in flight promises.
+   */
+  async #cacheGraph(graph: NamedNode | DefaultGraph) {
+    const fileHandle = await this.#graphToFileHandle(graph as NamedNode | DefaultGraph)
+    if (!fileHandle) return
 
     if (!this.#inFlightCachePromises.has(graph.value)) {
-        const promise = this.#parseGraph(graph, fileHandle);
-        this.#inFlightCachePromises.set(graph.value, promise);
-        promise.then(() => {
-            this.#inFlightCachePromises.delete(graph.value);
-        })
+      const promise = this.#parseAndStoreGraph(graph, fileHandle)
+      this.#inFlightCachePromises.set(graph.value, promise)
+      promise.then(() => {
+        this.#inFlightCachePromises.delete(graph.value)
+      })
     }
 
     return this.#inFlightCachePromises.get(graph.value)
   }
 
-  async #parseGraph(graph: NamedNode, fileHandle: FileSystemFileHandle) {
-    const parser = new Parser({ baseIRI: graph.value });
-    const contents = await (await fileHandle.getFile()).text();
-    const quads = await parser.parse(contents);
-    this.#cache.addQuads(
-      quads.map((quad) =>
-        factory.quad(quad.subject, quad.predicate, quad.object, graph)
-      )
-    );
+  /**
+   * The actual function that parses a file on disk and puts it into the N3 store.
+   */
+  async #parseAndStoreGraph(graph: NamedNode | DefaultGraph, fileHandle: FileSystemFileHandle) {
+    const parser = new Parser({ baseIRI: graph.value })
+    const contents = await (await fileHandle.getFile()).text()
+    const quads = await parser.parse(contents)
+    this.#cache.addQuads(quads.map(quad => factory.quad(quad.subject, quad.predicate, quad.object, graph)))
   }
 
-  async *getNamedGraphs(): AsyncIterable<NamedNode> {
+  /**
+   * Returns all named graphs.
+   */
+  async *getNamedGraphs(): AsyncIterable<NamedNode | DefaultGraph> {
     for await (const [graph] of this.#getNamedGraphsWithFileHandle()) {
-      yield graph;
+      yield graph
     }
   }
 
-  async *#getNamedGraphsWithFileHandle(): AsyncIterable<
-    [NamedNode, FileSystemFileHandle]
-  > {
-    if (!this.#directoryHandle) throw new Error(`Local store not mounted`);
+  async *#getNamedGraphsWithFileHandle(): AsyncIterable<[NamedNode | DefaultGraph, FileSystemFileHandle]> {
+    if (!this.#directoryHandle) throw new Error(`Local store not mounted`)
 
-    for await (const [path, entry] of getAllFilesFromDirectory(
-      this.#directoryHandle
-    )) {
-      const graph = this.#pathAndFileHandleToGraph(path);
-      yield [graph, entry];
+    for await (const [path, entry] of getAllFilesFromDirectory(this.#directoryHandle)) {
+      const graph = this.#pathAndFileHandleToGraph(path)
+      yield [graph, entry]
     }
   }
 
-  #pathAndFileHandleToGraph(path: string): NamedNode {
-    const cleanedPath = path.substring(0, path.length - 4);
-    const parts = cleanedPath.split("/");
-    const filename = parts.pop()!;
+  #pathAndFileHandleToGraph(path: string): NamedNode | DefaultGraph {
+    const cleanedPath = path.substring(0, path.length - 4)
+    const parts = cleanedPath.split('/')
+    const filename = parts.pop()!
 
+    /**
+     * The default graph
+     */
+    if (path === 'default-graph.ttl') return factory.defaultGraph()
+
+    /**
+     * A graph that is not starting with our base name.
+     */
     if (Hex.is(filename)) {
-      const decoded = Hex.decodeStr(filename);
-      return factory.namedNode(decoded);
+      const decoded = Hex.decodeStr(filename)
+      return factory.namedNode(decoded)
     }
 
-    return factory.namedNode(new URL(cleanedPath, this.#baseUri).toString());
+    /**
+     * Relative named graphs
+     */
+    return factory.namedNode(new URL(cleanedPath, this.#baseUri).toString())
   }
 
-  async #graphToFileHandle(
-    graph: NamedNode | DefaultGraph
-  ): Promise<FileSystemFileHandle | undefined> {
-    if (!this.#directoryHandle) throw new Error(`Local store not mounted`);
+  async #graphToFileHandle(graph: NamedNode | DefaultGraph): Promise<FileSystemFileHandle | undefined> {
+    if (!this.#directoryHandle) throw new Error(`Local store not mounted`)
 
     /**
      * Relative named graphs
      */
     if (graph.value.startsWith(this.#baseUri.toString())) {
-      const filename = `${graph.value.replace(
-        this.#baseUri.toString(),
-        ""
-      )}.ttl`;
+      const filename = `${graph.value.replace(this.#baseUri.toString(), '')}.ttl`
 
       try {
-        return getFileHandleByPath(filename, this.#directoryHandle);
+        return getFileHandleByPath(filename, this.#directoryHandle)
       } catch {}
 
       /**
        * The default graph
        */
-    } else if (graph.termType === "DefaultGraph") {
-      return getFileHandleByPath("default-graph.ttl", this.#directoryHandle);
+    } else if (graph.termType === 'DefaultGraph') {
+      return getFileHandleByPath('default-graph.ttl', this.#directoryHandle)
 
       /**
        * A graph that is not starting with our base name.
        */
     } else {
-      const uint8 = new TextEncoder().encode(graph.value);
-      const encoded = Hex.encode(uint8);
-      const filename = `${encoded}.ttl`;
-      return getFileHandleByPath(filename, this.#directoryHandle);
+      const uint8 = new TextEncoder().encode(graph.value)
+      const encoded = Hex.encode(uint8)
+      const filename = `${encoded}.ttl`
+      return getFileHandleByPath(filename, this.#directoryHandle)
     }
   }
 }
