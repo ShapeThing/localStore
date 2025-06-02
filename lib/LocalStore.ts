@@ -54,14 +54,47 @@ export class LocalStore implements Source, RdfJsStore {
     }
   }
 
+  /**
+   * Removes quads by matching
+   */
   removeMatches(
     subject?: Term | null,
     predicate?: Term | null,
     object?: Term | null,
     graph?: Term | null
   ): EventEmitter {
-    console.log(subject, predicate, object, graph)
-    throw new Error('Method not implemented.')
+    const eventEmitter = new EventEmitter()
+    let graphIterations = 0
+    let graphIterationsEnded = 0
+
+    ;(async () => {
+      const graphIterator = graph ? ([graph] as [NamedNode]) : this.getNamedGraphs()
+
+      for await (const graph of graphIterator) {
+        graphIterations++
+        /** @ts-expect-error the typings are off */
+        this.#cache.removeMatches(subject, predicate, object, graph)
+
+        const matches = this.match(subject, predicate, object, graph)
+
+        const deletions: Quad[] = []
+
+        matches.on('data', quad => {
+          deletions.push(quad)
+        })
+
+        matches.on('end', () => {
+          this.updateGraph(graph, { deletions })
+
+          graphIterationsEnded++
+          if (graphIterations === graphIterationsEnded) {
+            eventEmitter.emit('end')
+          }
+        })
+      }
+    })()
+
+    return eventEmitter
   }
 
   /**
@@ -85,9 +118,7 @@ export class LocalStore implements Source, RdfJsStore {
    */
   import(stream: Stream<Quad>): EventEmitter {
     const eventEmitter = new EventEmitter()
-
     let lastGraph: NamedNode | DefaultGraph | undefined = undefined
-
     const insertions: Record<string, Quad[]> = {}
 
     const onEvent = (quad?: Quad) => {
@@ -121,9 +152,7 @@ export class LocalStore implements Source, RdfJsStore {
    */
   remove(stream: Stream<Quad>): EventEmitter {
     const eventEmitter = new EventEmitter()
-
     let lastGraph: NamedNode | DefaultGraph | undefined = undefined
-
     const deletions: Record<string, Quad[]> = {}
 
     const onEvent = (quad?: Quad) => {
@@ -192,10 +221,7 @@ export class LocalStore implements Source, RdfJsStore {
    */
   match(subject?: Term | null, predicate?: Term | null, object?: Term | null, graph?: Term | null): Stream<Quad> {
     if (!this.#directoryHandle) throw new Error(`Local store not mounted`)
-
     const stream = new Readable({ objectMode: true })
-
-    console.info('match')
 
     stream._read = async () => {
       const graphIterator = graph ? ([graph] as [NamedNode]) : this.getNamedGraphs()
@@ -286,6 +312,9 @@ export class LocalStore implements Source, RdfJsStore {
     }
   }
 
+  /**
+   * Given a path and a file handle, creates a graph term.
+   */
   #pathAndFileHandleToGraph(path: string): NamedNode | DefaultGraph {
     const cleanedPath = path.substring(0, path.length - 4)
     const parts = cleanedPath.split('/')
@@ -310,6 +339,9 @@ export class LocalStore implements Source, RdfJsStore {
     return factory.namedNode(new URL(cleanedPath, this.#baseUri).toString())
   }
 
+  /**
+   * Given a graph term returns the file handle from disk.
+   */
   async #graphToFileHandle(
     graph: NamedNode | DefaultGraph,
     create?: boolean
