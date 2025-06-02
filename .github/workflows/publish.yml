@@ -17,4 +17,5 @@ jobs:
         uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-        run: deno i && deno publish
+
+      - run: deno i && deno publish
