@@ -6,9 +6,9 @@ import { get, set } from 'idb-keyval'
 import { Parser, Store, Writer } from 'n3'
 /** @ts-ignore */
 import { Readable } from 'readable-stream'
-import { getAllFilesFromDirectory } from './helpers/getAllFilesFromDirectory'
-import { getFileHandleByPath } from './helpers/getFileHandleByPath'
-import { toTriple } from './helpers/toTriple'
+import { getAllFilesFromDirectory } from './helpers/getAllFilesFromDirectory.ts'
+import { getFileHandleByPath } from './helpers/getFileHandleByPath.ts'
+import { toTriple } from './helpers/toTriple.ts'
 
 type LocalStoreOptions = {
   baseUri: URL
@@ -45,7 +45,9 @@ export class LocalStore implements Source, RdfJsStore {
         console.info(`Could not find connection to folder ${name}, please connect again.`)
       }
 
+      /** @ts-ignore Deno publish does not pick up our types */
       this.#directoryHandle = await globalThis.showDirectoryPicker()
+      if (!this.#directoryHandle) throw new Error('Could not save the folder')
       await set(this.#directoryHandle.name, this.#directoryHandle)
       mounts.add(this.#directoryHandle.name)
       set('mounts', mounts)
@@ -184,7 +186,10 @@ export class LocalStore implements Source, RdfJsStore {
   /**
    * Updates one graph on disk
    */
-  async updateGraph(graph: NamedNode | DefaultGraph, update: { deletions?: Quad[]; insertions?: Quad[] }) {
+  async updateGraph(
+    graph: NamedNode | DefaultGraph,
+    update: { deletions?: Quad[]; insertions?: Quad[] }
+  ): Promise<void> {
     const fileHandle = (await this.#graphToFileHandle(graph, true)) as FileSystemFileHandle
     const file = await fileHandle.getFile()!
 
@@ -210,7 +215,7 @@ export class LocalStore implements Source, RdfJsStore {
         this.#cache.deleteGraph(graph)
 
         if (error) reject(error)
-        resolve(null)
+        resolve(undefined)
       })
     })
   }
@@ -357,6 +362,8 @@ export class LocalStore implements Source, RdfJsStore {
         ? relativeGraph.substring(0, relativeGraph.length - 1)
         : relativeGraph
       const filename = `${cleanedRelativeGraph}.ttl`
+
+      if (!cleanedRelativeGraph) throw new Error('A graph must have a filename')
 
       try {
         return getFileHandleByPath(filename, this.#directoryHandle, create)

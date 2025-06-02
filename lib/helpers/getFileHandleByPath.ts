@@ -1,4 +1,4 @@
-import { nonNullable } from './nonNullable'
+import { nonNullable } from './nonNullable.ts'
 
 const getHandleByPath = async (path: string, root: FileSystemDirectoryHandle, create?: boolean): Promise<any> => {
   const pathParts = path.split('/').filter(nonNullable)
