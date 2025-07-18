@@ -48,8 +48,8 @@ export class LocalStore implements Source, RdfJsStore {
       /** @ts-ignore Deno publish does not pick up our types */
       this.#directoryHandle = await globalThis.showDirectoryPicker()
       if (!this.#directoryHandle) throw new Error('Could not save the folder')
-      await set(this.#directoryHandle.name, this.#directoryHandle)
-      mounts.add(this.#directoryHandle.name)
+      await set(name ?? this.#directoryHandle.name, this.#directoryHandle)
+      mounts.add(name ?? this.#directoryHandle.name)
       set('mounts', mounts)
     } catch (error: any) {
       console.error(error)
