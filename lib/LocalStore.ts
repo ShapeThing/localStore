@@ -217,7 +217,7 @@ export class LocalStore implements Source, RdfJsStore {
   /**
    * An optimization for Comunica, so that there are less .match() calls.
    */
-  countQuads(subject?: Term | null, predicate?: Term | null, object?: Term | null, graph?: Term | null) {
+  countQuads(subject?: Term | null, predicate?: Term | null, object?: Term | null, graph?: Term | null): number {
     if (graph && this.#graphIsCached(graph as NamedNode | DefaultGraph))
       return this.#cache.countQuads(subject as OTerm, predicate as OTerm, object as OTerm, graph)
     return 1
