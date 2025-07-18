@@ -81,3 +81,14 @@ document.querySelector('#delete-where')?.addEventListener('click', async () => {
     sources: [store]
   })
 })
+
+document.querySelector('#query-2')?.addEventListener('click', async () => {
+  const bindingStream = await engine.queryBindings(`select distinct ?g { graph ?g { ?s ?p ?o } }`, {
+    sources: [store]
+  })
+
+  const bindings = await bindingStream.toArray()
+  for (const binding of bindings) {
+    console.log(binding.get('g'))
+  }
+})

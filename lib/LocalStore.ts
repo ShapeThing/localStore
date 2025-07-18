@@ -3,7 +3,7 @@ import type { DefaultGraph, NamedNode, Quad, Quad_Graph, Store as RdfJsStore, So
 import EventEmitter from 'events'
 import Hex from 'hex-encoding'
 import { get, set } from 'idb-keyval'
-import { Parser, Store, Writer } from 'n3'
+import { Parser, Store, Writer, type OTerm } from 'n3'
 /** @ts-ignore */
 import { Readable } from 'readable-stream'
 import { getAllFilesFromDirectory } from './helpers/getAllFilesFromDirectory.ts'
@@ -76,15 +76,10 @@ export class LocalStore implements Source, RdfJsStore {
         graphIterations++
         /** @ts-expect-error the typings are off */
         this.#cache.removeMatches(subject, predicate, object, graph)
-
         const matches = this.match(subject, predicate, object, graph)
-
         const deletions: Quad[] = []
 
-        matches.on('data', quad => {
-          deletions.push(quad)
-        })
-
+        matches.on('data', quad => deletions.push(quad))
         matches.on('end', () => {
           this.updateGraph(graph, { deletions })
 
@@ -174,7 +169,6 @@ export class LocalStore implements Source, RdfJsStore {
 
     stream.on('data', onEvent)
     stream.on('end', onEvent)
-
     stream.on('error', (error: Error) => {
       console.error('Error in input stream:', error)
       eventEmitter.emit('error', error)
@@ -221,6 +215,15 @@ export class LocalStore implements Source, RdfJsStore {
   }
 
   /**
+   * An optimization for Comunica, so that there are less .match() calls.
+   */
+  countQuads(subject?: Term | null, predicate?: Term | null, object?: Term | null, graph?: Term | null) {
+    if (graph && this.#graphIsCached(graph as NamedNode | DefaultGraph))
+      return this.#cache.countQuads(subject as OTerm, predicate as OTerm, object as OTerm, graph)
+    return 1
+  }
+
+  /**
    * The main function for local store for reading.
    * When a match is done we decide which graphs we need to cache and parse them and put them in the N3 store.
    */
@@ -247,9 +250,9 @@ export class LocalStore implements Source, RdfJsStore {
         )
 
         graphStream.on('data', (quad: Quad) => {
+          if (stream.destroyed) return
           stream.push(quad)
         })
-
         graphStream.on('end', () => {
           graphIterationsEnded++
           if (graphIterations === graphIterationsEnded) {
