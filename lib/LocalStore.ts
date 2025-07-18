@@ -278,7 +278,7 @@ export class LocalStore implements Source, RdfJsStore {
       } catch (error) {
         if (!hasEnded) {
           hasEnded = true
-          stream.destroy(error)
+          stream.destroy(error as Error)
         }
       }
     }
