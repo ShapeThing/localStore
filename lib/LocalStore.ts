@@ -230,35 +230,56 @@ export class LocalStore implements Source, RdfJsStore {
   match(subject?: Term | null, predicate?: Term | null, object?: Term | null, graph?: Term | null): Stream<Quad> {
     if (!this.#directoryHandle) throw new Error(`Local store not mounted`)
     const stream = new Readable({ objectMode: true })
+    let isReading = false
+    let hasEnded = false
 
     stream._read = async () => {
-      const graphIterator = graph ? ([graph] as [NamedNode]) : this.getNamedGraphs()
+      if (isReading || hasEnded) return
+      isReading = true
 
-      let graphIterations = 0
-      let graphIterationsEnded = 0
+      try {
+        const graphIterator = graph ? ([graph] as [NamedNode]) : this.getNamedGraphs()
 
-      for await (const graph of graphIterator) {
-        graphIterations++
+        let graphIterations = 0
+        let graphIterationsEnded = 0
 
-        if (!this.#graphIsCached(graph)) await this.#cacheGraph(graph)
-        const graphStream = this.#cache.match(
-          /** @ts-ignore */
-          subject,
-          predicate,
-          object,
-          graph
-        )
+        for await (const graph of graphIterator) {
+          if (hasEnded) return
+          graphIterations++
 
-        graphStream.on('data', (quad: Quad) => {
-          if (stream.destroyed) return
-          stream.push(quad)
-        })
-        graphStream.on('end', () => {
-          graphIterationsEnded++
-          if (graphIterations === graphIterationsEnded) {
-            stream.push(null)
-          }
-        })
+          if (!this.#graphIsCached(graph)) await this.#cacheGraph(graph)
+          const graphStream = this.#cache.match(
+            /** @ts-ignore */
+            subject,
+            predicate,
+            object,
+            graph
+          )
+
+          graphStream.on('data', (quad: Quad) => {
+            if (stream.destroyed || hasEnded) return
+            stream.push(quad)
+          })
+
+          graphStream.on('end', () => {
+            graphIterationsEnded++
+            if (graphIterations === graphIterationsEnded && !hasEnded) {
+              hasEnded = true
+              stream.push(null)
+            }
+          })
+        }
+
+        // Handle case where there are no graphs
+        if (graphIterations === 0 && !hasEnded) {
+          hasEnded = true
+          stream.push(null)
+        }
+      } catch (error) {
+        if (!hasEnded) {
+          hasEnded = true
+          stream.destroy(error)
+        }
       }
     }
 
