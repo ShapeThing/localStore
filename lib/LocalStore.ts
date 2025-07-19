@@ -57,6 +57,32 @@ export class LocalStore implements Source, RdfJsStore {
   }
 
   /**
+   * Deletes a connection to a folder.
+   * This does not delete the folder on disk, but only the connection to it.
+   */
+  async unmount(name: string) {
+    try {
+      if (this.#directoryHandle) {
+        this.#directoryHandle = undefined
+        const mounts: Set<string> = (await get('mounts')) ?? new Set()
+        mounts.delete(name)
+        set('mounts', mounts)
+      }
+    } catch (error: any) {
+      console.error(error)
+    }
+  }
+
+  /**
+   * Only use this when there is no data yet in the local folder attached to the previous baseURI.
+   * Currently this does not rename previous data, it orphans it.
+   */
+  setBaseUri(baseUri: URL): void {
+    if (!baseUri.toString().endsWith('/')) throw new Error('BaseURI must end on a trailing slash')
+    this.#baseUri = baseUri
+  }
+
+  /**
    * Removes quads by matching
    */
   removeMatches(
