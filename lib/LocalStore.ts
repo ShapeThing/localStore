@@ -347,7 +347,8 @@ export class LocalStore implements Source, RdfJsStore {
   async #parseAndStoreGraph(graph: NamedNode | DefaultGraph, fileHandle: FileSystemFileHandle) {
     const parser = new Parser({ baseIRI: graph.value })
     const contents = await (await fileHandle.getFile()).text()
-    const quads = await parser.parse(contents)
+    const strippedContents = contents.replace(/\<([a-z.\/#]*)\.ttl([a-z.\/#]*)\>/g, '<$1$2>')
+    const quads = await parser.parse(strippedContents)
     this.#cache.addQuads(quads.map(quad => factory.quad(quad.subject, quad.predicate, quad.object, graph)))
   }
 
