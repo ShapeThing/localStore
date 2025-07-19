@@ -273,7 +273,6 @@ export class LocalStore implements Source, RdfJsStore {
         for await (const graph of graphIterator) {
           if (hasEnded) return
           graphIterations++
-
           if (!this.#graphIsCached(graph)) await this.#cacheGraph(graph)
           const graphStream = this.#cache.match(
             /** @ts-ignore */
@@ -319,7 +318,7 @@ export class LocalStore implements Source, RdfJsStore {
    */
   #graphIsCached(graph: NamedNode | DefaultGraph) {
     /** @ts-expect-error we are using N3s internal API */
-    return this.#cache._termToNumericId(graph) !== undefined
+    return this.#cache._graphs[this.#cache._termToNumericId(graph)] !== undefined
   }
 
   /**
@@ -345,11 +344,15 @@ export class LocalStore implements Source, RdfJsStore {
    * The actual function that parses a file on disk and puts it into the N3 store.
    */
   async #parseAndStoreGraph(graph: NamedNode | DefaultGraph, fileHandle: FileSystemFileHandle) {
-    const parser = new Parser({ baseIRI: graph.value })
-    const contents = await (await fileHandle.getFile()).text()
-    const strippedContents = contents.replace(/\<([a-z.\/#]*)\.ttl([a-z.\/#]*)\>/g, '<$1$2>')
-    const quads = await parser.parse(strippedContents)
-    this.#cache.addQuads(quads.map(quad => factory.quad(quad.subject, quad.predicate, quad.object, graph)))
+    try {
+      const parser = new Parser({ baseIRI: graph.value })
+      const contents = await (await fileHandle.getFile()).text()
+      const strippedContents = contents.replace(/<(.|\/)(.*)\.ttl(.*)>/g, '<$1$2>')
+      const quads = await parser.parse(strippedContents)
+      this.#cache.addQuads(quads.map(quad => factory.quad(quad.subject, quad.predicate, quad.object, graph)))
+    } catch (error: any) {
+      throw new Error(`Error while parsing graph ${graph.value}:` + error.message)
+    }
   }
 
   /**

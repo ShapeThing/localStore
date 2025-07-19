@@ -87,6 +87,7 @@ document.querySelector('#query-2')?.addEventListener('click', async () => {
   })
 
   const bindings = await bindingStream.toArray()
+  console.log(bindings.length)
   for (const binding of bindings) {
     console.log(binding.get('g'))
   }
