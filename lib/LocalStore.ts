@@ -358,7 +358,10 @@ export class LocalStore implements Source, RdfJsStore {
   async *getNamedGraphs(graphs?: (NamedNode | DefaultGraph)[]): AsyncIterable<NamedNode | DefaultGraph> {
     if (graphs && graphs.length > 0) {
       for (const graph of graphs) {
-        yield graph
+        const fileHandle = await this.#graphToFileHandle(graph, false)
+        if (fileHandle) {
+          yield graph
+        }
       }
       return
     }

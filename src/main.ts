@@ -13,11 +13,10 @@ const store = new LocalStore({
   baseUri: new URL('http://example.com/')
 })
 
-await store.mount('example')
-
 const engine = new QueryEngine()
 
 document.querySelector('#mount-store')?.addEventListener('click', async () => {
+  console.log('Store mount')
   await store.mount('example')
 })
 
