@@ -258,13 +258,14 @@ export class LocalStore implements Source, RdfJsStore {
     const stream = new Readable({ objectMode: true })
     let isReading = false
     let hasEnded = false
+    let startedAllStreams = false
 
     stream._read = async () => {
       if (isReading || hasEnded) return
       isReading = true
 
       try {
-        const graphIterator = graph ? ([graph] as [NamedNode]) : this.getNamedGraphs()
+        const graphIterator = this.getNamedGraphs(graph ? [graph as NamedNode] : undefined)
 
         let graphIterations = 0
         let graphIterationsEnded = 0
@@ -289,12 +290,14 @@ export class LocalStore implements Source, RdfJsStore {
 
           graphStream.on('end', () => {
             graphIterationsEnded++
-            if (graphIterations === graphIterationsEnded && !hasEnded) {
+            if (graphIterations === graphIterationsEnded && !hasEnded && startedAllStreams) {
               hasEnded = true
               stream.push(null)
             }
           })
         }
+
+        startedAllStreams = true
 
         // Handle case where there are no graphs
         if (graphIterations === 0 && !hasEnded) {
@@ -350,9 +353,16 @@ export class LocalStore implements Source, RdfJsStore {
   }
 
   /**
-   * Returns all named graphs.
+   * Returns all named graphs or a subset of them.
    */
-  async *getNamedGraphs(): AsyncIterable<NamedNode | DefaultGraph> {
+  async *getNamedGraphs(graphs?: (NamedNode | DefaultGraph)[]): AsyncIterable<NamedNode | DefaultGraph> {
+    if (graphs && graphs.length > 0) {
+      for (const graph of graphs) {
+        yield graph
+      }
+      return
+    }
+
     for await (const [graph] of this.#getNamedGraphsWithFileHandle()) {
       yield graph
     }
