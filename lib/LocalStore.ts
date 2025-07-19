@@ -299,8 +299,7 @@ export class LocalStore implements Source, RdfJsStore {
 
         startedAllStreams = true
 
-        // Handle case where there are no graphs
-        if (graphIterations === 0 && !hasEnded) {
+        if (!hasEnded && startedAllStreams && graphIterations === graphIterationsEnded) {
           hasEnded = true
           stream.push(null)
         }
