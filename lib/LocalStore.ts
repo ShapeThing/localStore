@@ -74,6 +74,13 @@ export class LocalStore implements Source, RdfJsStore {
   }
 
   /**
+   * Returns the name of the currently mounted folder.
+   */
+  getFolderName() {
+    return this.#directoryHandle?.name
+  }
+
+  /**
    * Only use this when there is no data yet in the local folder attached to the previous baseURI.
    * Currently this does not rename previous data, it orphans it.
    */
