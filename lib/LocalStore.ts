@@ -76,7 +76,7 @@ export class LocalStore implements Source, RdfJsStore {
   /**
    * Returns the name of the currently mounted folder.
    */
-  getFolderName() {
+  getFolderName(): string | undefined {
     return this.#directoryHandle?.name
   }
 
