@@ -240,6 +240,7 @@ export class LocalStore implements Source, RdfJsStore {
 
         // Clear the cache so fresh data wil be fetched.
         this.#cache.deleteGraph(graph)
+        this.#inFlightCachePromises.delete(graph.value)
 
         if (error) reject(error)
         resolve(undefined)
@@ -339,9 +340,6 @@ export class LocalStore implements Source, RdfJsStore {
     if (!this.#inFlightCachePromises.has(graph.value)) {
       const promise = this.#parseAndStoreGraph(graph, fileHandle)
       this.#inFlightCachePromises.set(graph.value, promise)
-      promise.then(() => {
-        this.#inFlightCachePromises.delete(graph.value)
-      })
     }
 
     return this.#inFlightCachePromises.get(graph.value)
