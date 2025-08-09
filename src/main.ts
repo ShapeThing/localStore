@@ -91,4 +91,5 @@ document.querySelector('#query-2')?.addEventListener('click', async () => {
   for (const binding of bindings) {
     console.log(binding.get('g'))
   }
+  console.log(store.prefixes)
 })

@@ -18,6 +18,7 @@ type LocalStoreOptions = {
  * Each of these files can have relative IRIs such as <> or <#lorem> or </ipsum>.
  */
 export class LocalStore implements Source, RdfJsStore {
+  public prefixes: Record<string, string> = {}
   #directoryHandle?: FileSystemDirectoryHandle
   #baseUri: URL
   #cache: Store = new Store()
@@ -354,6 +355,9 @@ export class LocalStore implements Source, RdfJsStore {
       const contents = await (await fileHandle.getFile()).text()
       const strippedContents = contents.replace(/<(.|\/)(.*)\.ttl(.*)>/g, '<$1$2>')
       const quads = await parser.parse(strippedContents)
+      /** @ts-expect-error an internal property of the parser */
+      const prefixes = parser._prefixes
+      this.prefixes = { ...this.prefixes, ...prefixes }
       this.#cache.addQuads(quads.map(quad => factory.quad(quad.subject, quad.predicate, quad.object, graph)))
     } catch (error: any) {
       throw new Error(`Error while parsing graph ${graph.value}:` + error.message)

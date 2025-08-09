@@ -1,6 +1,6 @@
 {
     "name": "@shapething/localstore",
-    "version": "0.1.13",
+    "version": "0.1.14",
     "license": "MIT",
     "exports": "./lib/LocalStore.ts"
 }
